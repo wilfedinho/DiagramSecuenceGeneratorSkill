@@ -133,3 +133,38 @@ Las capas del sistema son: GUI, Controlador, Servicio, Repositorio, BD
 | Los `alt` mueven lifelines | Son `InteractionFragment` en paquete separado — arrastrarlos desde el borde |
 | Caracteres extraños en EA | El script limpia automáticamente acentos y caracteres especiales |
 | `\n` visible en parámetros | El script elimina automáticamente los `\n` de PlantUML |
+| `Failed to get EA::IDualApp interface` al ejecutar el script | El registro COM de EA se perdió. Ver sección siguiente. |
+
+---
+
+### Error: `Failed to get EA::IDualApp interface`
+
+**Causa frecuente — formateo del disco principal de Windows**
+
+El registro COM de Windows reside en el disco del sistema (`C:\`). Si EA estaba
+instalado en un disco secundario (por ejemplo `F:\`) y el disco principal fue
+formateado, EA sigue físicamente intacto pero Windows ya no lo reconoce como
+componente COM. El scripting engine de EA (`SScript.dll`) no puede establecer
+la interfaz y falla antes de ejecutar cualquier línea del script.
+
+**Solución — re-registrar EA como Administrador**
+
+1. Cerrar EA completamente.
+2. Abrir **CMD como Administrador**.
+3. Ejecutar:
+   ```cmd
+   "F:\Sparx System Entreprise 15.2\EA.exe" /regserver
+   ```
+   *(ajustar la ruta si la instalación está en otra ubicación)*
+4. Abrir EA normalmente y volver a ejecutar el script.
+
+**Si el error persiste**, registrar también las DLLs de scripting:
+
+```cmd
+regsvr32 "F:\Sparx System Entreprise 15.2\SScript.dll"
+regsvr32 "F:\Sparx System Entreprise 15.2\SSImport.dll"
+```
+
+**Última opción** — reinstalar EA 15.2 apuntando a la misma carpeta
+(`F:\Sparx System Entreprise 15.2`). Los proyectos `.eap` / `.qea` no se
+modifican y quedan intactos.

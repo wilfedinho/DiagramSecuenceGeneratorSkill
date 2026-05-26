@@ -1,5 +1,6 @@
 ' ============================================================
 ' Create-Sequence-Diagram.vbs  — EA 15.2
+' Ejecutar desde: Specialize > Scripting (VBScript interno de EA)
 ' Orden correcto via SequenceNo en DiagramLink
 ' ============================================================
 
@@ -18,17 +19,76 @@ Const FRAG_HEIGHT  = 70
 Const FRAG_GAP     = 90
 
 Sub RunPlantUMLScript()
-    Dim eaApp, repo, pkg, diag, script, diagName, fso, filePath, fileObj
-    Set eaApp = GetObject(, "EA.App")
-    Set repo  = eaApp.Repository
+    Dim repo, pkg, diag, script, diagName, fso, filePath, fileObj
+
+    ' --------------------------------------------------------
+    ' PASO 1 - Ruta de instalacion de Enterprise Architect
+    ' (informativo: confirma la instalacion activa)
+    ' --------------------------------------------------------
+    Dim eaInstallPath
+    eaInstallPath = InputBox( _
+        "Confirme la ruta de instalacion de Enterprise Architect:" & Chr(10) & Chr(10) & _
+        "  Ejemplo: F:\Sparx System Entreprise 15.2", _
+        "Enterprise Architect -- Ruta de instalacion", _
+        "F:\Sparx System Entreprise 15.2")
+
+    If Trim(eaInstallPath) = "" Then
+        MsgBox "Operacion cancelada.", vbInformation, "Cancelado"
+        Exit Sub
+    End If
+
+    ' Normalizar: quitar barra final si la tiene
+    If Right(eaInstallPath, 1) = "\" Then
+        eaInstallPath = Left(eaInstallPath, Len(eaInstallPath) - 1)
+    End If
+
+    ' Validar que la carpeta existe
+    Set fso = CreateObject("Scripting.FileSystemObject")
+    If Not fso.FolderExists(eaInstallPath) Then
+        MsgBox "La ruta especificada no existe:" & Chr(10) & Chr(10) & _
+               "  " & eaInstallPath & Chr(10) & Chr(10) & _
+               "Verifique la ruta e intente nuevamente.", _
+               vbCritical, "Ruta no encontrada"
+        Exit Sub
+    End If
+
+    ' Validar que EA.exe existe en esa carpeta
+    If Not fso.FileExists(eaInstallPath & "\EA.exe") Then
+        MsgBox "No se encontro EA.exe en la ruta indicada:" & Chr(10) & Chr(10) & _
+               "  " & eaInstallPath & "\EA.exe" & Chr(10) & Chr(10) & _
+               "Verifique que la ruta de instalacion sea correcta.", _
+               vbCritical, "EA.exe no encontrado"
+        Exit Sub
+    End If
+
+    ' --------------------------------------------------------
+    ' PASO 2 - Obtener Repository directamente (contexto EA interno)
+    ' NOTA: dentro del scripting engine de EA, Repository es
+    ' una variable global — NO usar GetObject(,"EA.App")
+    ' --------------------------------------------------------
+    Set repo = Repository
+
+    If repo Is Nothing Then
+        MsgBox "No se pudo acceder al repositorio de EA." & Chr(10) & _
+               "Asegurese de tener un proyecto abierto.", _
+               vbCritical, "Sin repositorio"
+        Exit Sub
+    End If
+
     Set pkg = repo.GetTreeSelectedPackage()
     If pkg Is Nothing Then
         MsgBox "Selecciona un paquete en el Project Browser.", vbExclamation
         Exit Sub
     End If
-    filePath = InputBox("Ruta completa del archivo .txt con el PlantUML:" & Chr(10) & Chr(10) & "Ej: C:\Users\Usuario\Downloads\DSS_CUN01_plantuml.txt", "PlantUML -> EA")
+
+    ' --------------------------------------------------------
+    ' PASO 3 - Ruta del archivo PlantUML (.txt)
+    ' --------------------------------------------------------
+    filePath = InputBox( _
+        "Ruta completa del archivo .txt con el PlantUML:" & Chr(10) & Chr(10) & _
+        "Ej: C:\Users\Usuario\Downloads\DSS_CUN01_plantuml.txt", _
+        "PlantUML -> EA")
     If Trim(filePath) = "" Then Exit Sub
-    Set fso = CreateObject("Scripting.FileSystemObject")
     If Not fso.FileExists(Trim(filePath)) Then
         MsgBox "Archivo no encontrado: " & filePath, vbExclamation
         Exit Sub
@@ -66,7 +126,6 @@ Sub BuildDiagram(repo, pkg, diag, script)
     Dim evType(200), evY1(200), evSrc(200), evDst(200)
     Dim evMsg(200), evArrow(200), evLabel(200)
     Dim evCount : evCount = 0
-    Dim firstActor : firstActor = True
 
     script = Replace(Replace(script, Chr(13) & Chr(10), Chr(10)), Chr(13), Chr(10))
     lines  = Split(script, Chr(10))
@@ -75,13 +134,7 @@ Sub BuildDiagram(repo, pkg, diag, script)
     For i = 0 To UBound(lines)
         raw = Trim(lines(i)) : lo = LCase(raw) : kw = "" : stereo = ""
         If Left(lo,6) = "actor " Then
-            kw = "actor"
-            If firstActor Then
-                stereo = "Actor"
-                firstActor = False
-            Else
-                stereo = "Class"
-            End If
+            kw = "actor" : stereo = "Actor"  ' todos los actores siempre como Actor
         End If
         If Left(lo,9) ="boundary "    Then kw="boundary":   stereo="Boundary"
         If Left(lo,8) ="control "     Then kw="control":    stereo="Class"
@@ -170,8 +223,12 @@ Sub BuildDiagram(repo, pkg, diag, script)
     ' ---- CREAR LIFELINES en orden NORMAL (izq a der) ----
     cx = FIRST_X
     For i = 0 To pCount-1
-        Set newEl = pkg.Elements.AddNew(pName(i),"Class")
-        newEl.Stereotype=pType(i) : newEl.Update
+        ' Usar tipo "Actor" en EA para actores; "Class" para el resto
+        Dim eaType : eaType = "Class"
+        If pType(i) = "Actor" Then eaType = "Actor"
+        Set newEl = pkg.Elements.AddNew(pName(i), eaType)
+        If pType(i) <> "Actor" Then newEl.Stereotype = pType(i)
+        newEl.Update
         lx = cx-(LIFELINE_W\2)
         Set dob = diag.DiagramObjects.AddNew("","")
         dob.ElementID=newEl.ElementID : dob.left=lx : dob.top=0
@@ -213,8 +270,6 @@ Sub BuildDiagram(repo, pkg, diag, script)
     fragPkg.Update
 
     ' ---- CREAR MENSAJES en orden NORMAL con SequenceNo ----
-    ' SequenceNo fuerza el orden visual en EA independientemente
-    ' del orden de insercion en la base de datos
     Dim seqNo : seqNo = 1
     For i = 0 To evCount-1
         If evType(i) = 1 Then
@@ -227,7 +282,6 @@ Sub BuildDiagram(repo, pkg, diag, script)
                 If evArrow(i)="-->" Or evArrow(i)="-->>" Then mt="Return"
                 If evArrow(i)="->>" Then mt="Asynchronous"
 
-                ' Crear conector con SequenceNo para orden correcto
                 Dim cn : Set cn=se.Connectors.AddNew(evMsg(i),"Sequence")
                 cn.Stereotype  = mt
                 cn.ClientID    = se.ElementID
@@ -261,29 +315,17 @@ Sub BuildDiagram(repo, pkg, diag, script)
            "Arrastralos a su posicion correspondiente.", vbInformation
 End Sub
 
-' ============================================================
-' Limpia el texto: elimina \n del PlantUML y caracteres especiales
-' ============================================================
 Function CleanText(s)
-    Dim r
-    r = s
-    ' Eliminar saltos de linea de PlantUML (\n literal y real)
+    Dim r : r = s
     r = Replace(r, "\n", " ")
     r = Replace(r, Chr(10), " ")
     r = Replace(r, Chr(13), " ")
-    ' Eliminar caracteres especiales no ASCII (acentos, etc)
-    Dim result
-    result = ""
-    Dim k
-    Dim c
+    Dim result : result = ""
+    Dim k, c
     For k = 1 To Len(r)
         c = Asc(Mid(r, k, 1))
-        ' Mantener solo ASCII imprimible (32-126)
-        If c >= 32 And c <= 126 Then
-            result = result & Mid(r, k, 1)
-        End If
+        If c >= 32 And c <= 126 Then result = result & Mid(r, k, 1)
     Next
-    ' Colapsar espacios multiples
     Do While InStr(result, "  ") > 0
         result = Replace(result, "  ", " ")
     Loop
