@@ -1,7 +1,6 @@
 ' ============================================================
 ' Create-Sequence-Diagram.vbs  — EA 15.2
-' Ejecutar desde: Specialize > Scripting (VBScript interno de EA)
-' Orden correcto via SequenceNo en DiagramLink
+' Ejecutar desde: Specialize > Scripting > VB Scripts
 ' ============================================================
 
 Const LIFELINE_W   = 90
@@ -21,88 +20,54 @@ Const FRAG_GAP     = 90
 Sub RunPlantUMLScript()
     Dim repo, pkg, diag, script, diagName, fso, filePath, fileObj
 
-    ' --------------------------------------------------------
-    ' PASO 1 - Ruta de instalacion de Enterprise Architect
-    ' (informativo: confirma la instalacion activa)
-    ' --------------------------------------------------------
-    Dim eaInstallPath
-    eaInstallPath = InputBox( _
-        "Confirme la ruta de instalacion de Enterprise Architect:" & Chr(10) & Chr(10) & _
-        "  Ejemplo: F:\Sparx System Entreprise 15.2", _
-        "Enterprise Architect -- Ruta de instalacion", _
-        "F:\Sparx System Entreprise 15.2")
-
-    If Trim(eaInstallPath) = "" Then
-        MsgBox "Operacion cancelada.", vbInformation, "Cancelado"
-        Exit Sub
-    End If
-
-    ' Normalizar: quitar barra final si la tiene
-    If Right(eaInstallPath, 1) = "\" Then
-        eaInstallPath = Left(eaInstallPath, Len(eaInstallPath) - 1)
-    End If
-
-    ' Validar que la carpeta existe
-    Set fso = CreateObject("Scripting.FileSystemObject")
-    If Not fso.FolderExists(eaInstallPath) Then
-        MsgBox "La ruta especificada no existe:" & Chr(10) & Chr(10) & _
-               "  " & eaInstallPath & Chr(10) & Chr(10) & _
-               "Verifique la ruta e intente nuevamente.", _
-               vbCritical, "Ruta no encontrada"
-        Exit Sub
-    End If
-
-    ' Validar que EA.exe existe en esa carpeta
-    If Not fso.FileExists(eaInstallPath & "\EA.exe") Then
-        MsgBox "No se encontro EA.exe en la ruta indicada:" & Chr(10) & Chr(10) & _
-               "  " & eaInstallPath & "\EA.exe" & Chr(10) & Chr(10) & _
-               "Verifique que la ruta de instalacion sea correcta.", _
-               vbCritical, "EA.exe no encontrado"
-        Exit Sub
-    End If
-
-    ' --------------------------------------------------------
-    ' PASO 2 - Obtener Repository directamente (contexto EA interno)
-    ' NOTA: dentro del scripting engine de EA, Repository es
-    ' una variable global — NO usar GetObject(,"EA.App")
-    ' --------------------------------------------------------
+    ' El script corre dentro de EA — Repository es variable global
     Set repo = Repository
-
     If repo Is Nothing Then
-        MsgBox "No se pudo acceder al repositorio de EA." & Chr(10) & _
-               "Asegurese de tener un proyecto abierto.", _
+        MsgBox "No se pudo acceder al repositorio." & Chr(10) & _
+               "Asegurate de tener un proyecto abierto en EA.", _
                vbCritical, "Sin repositorio"
         Exit Sub
     End If
 
     Set pkg = repo.GetTreeSelectedPackage()
     If pkg Is Nothing Then
-        MsgBox "Selecciona un paquete en el Project Browser.", vbExclamation
+        MsgBox "Selecciona un paquete en el Project Browser antes de ejecutar.", vbExclamation
         Exit Sub
     End If
 
-    ' --------------------------------------------------------
-    ' PASO 3 - Ruta del archivo PlantUML (.txt)
-    ' --------------------------------------------------------
     filePath = InputBox( _
         "Ruta completa del archivo .txt con el PlantUML:" & Chr(10) & Chr(10) & _
         "Ej: C:\Users\Usuario\Downloads\DSS_CUN01_plantuml.txt", _
         "PlantUML -> EA")
     If Trim(filePath) = "" Then Exit Sub
-    If Not fso.FileExists(Trim(filePath)) Then
-        MsgBox "Archivo no encontrado: " & filePath, vbExclamation
+
+    filePath = Trim(filePath)
+    ' Quitar comillas dobles al inicio y al final (Windows las agrega al copiar rutas con espacios)
+    If Left(filePath, 1) = Chr(34) Then filePath = Mid(filePath, 2)
+    If Right(filePath, 1) = Chr(34) Then filePath = Left(filePath, Len(filePath) - 1)
+    filePath = Trim(filePath)
+    Set fso = CreateObject("Scripting.FileSystemObject")
+    If Not fso.FileExists(filePath) Then
+        MsgBox "Archivo no encontrado:" & Chr(10) & Chr(10) & _
+               "  " & filePath & Chr(10) & Chr(10) & _
+               "Verifica la ruta e intenta nuevamente.", _
+               vbExclamation, "Archivo no encontrado"
         Exit Sub
     End If
-    Set fileObj = fso.OpenTextFile(Trim(filePath), 1, False, -2)
+
+    Set fileObj = fso.OpenTextFile(filePath, 1, False, -2)
     script = fileObj.ReadAll()
     fileObj.Close
+
     diagName = ExtractTitle(script)
     If diagName = "" Then diagName = fso.GetBaseName(filePath)
+
     Set diag = pkg.Diagrams.AddNew(diagName, "Sequence")
     diag.Update
     Call BuildDiagram(repo, pkg, diag, script)
 End Sub
 
+' ============================================================
 Function ExtractTitle(script)
     Dim lines, i, s
     ExtractTitle = ""
@@ -115,6 +80,33 @@ Function ExtractTitle(script)
     Next
 End Function
 
+' ============================================================
+Function ExtractNoteText(script)
+    ExtractNoteText = ""
+    Dim lines, i, s, lo, collecting, noteLines
+    s = Replace(Replace(script, Chr(13) & Chr(10), Chr(10)), Chr(13), Chr(10))
+    lines = Split(s, Chr(10))
+    collecting = False
+    noteLines  = ""
+    For i = 0 To UBound(lines)
+        lo = LCase(Trim(lines(i)))
+        If Left(lo, 9) = "note over" Then
+            collecting = True
+            noteLines  = ""
+        ElseIf lo = "end note" Then
+            ExtractNoteText = CleanText(Trim(noteLines))
+            Exit Function
+        ElseIf collecting Then
+            If noteLines = "" Then
+                noteLines = Trim(lines(i))
+            Else
+                noteLines = noteLines & " " & Trim(lines(i))
+            End If
+        End If
+    Next
+End Function
+
+' ============================================================
 Sub BuildDiagram(repo, pkg, diag, script)
     Dim lines, i, j
     Dim raw, lo, kw, stereo, rest, pn, pa, asPos, namePart, found
@@ -134,7 +126,7 @@ Sub BuildDiagram(repo, pkg, diag, script)
     For i = 0 To UBound(lines)
         raw = Trim(lines(i)) : lo = LCase(raw) : kw = "" : stereo = ""
         If Left(lo,6) = "actor " Then
-            kw = "actor" : stereo = "Actor"  ' todos los actores siempre como Actor
+            kw = "actor" : stereo = "Actor"
         End If
         If Left(lo,9) ="boundary "    Then kw="boundary":   stereo="Boundary"
         If Left(lo,8) ="control "     Then kw="control":    stereo="Class"
@@ -155,7 +147,8 @@ Sub BuildDiagram(repo, pkg, diag, script)
                 If pName(j)=pn Or pAlias(j)=pa Then found=True
             Next
             If Not found Then
-                pName(pCount)=CleanText(pn) : pAlias(pCount)=pa : pType(pCount)=stereo : pCount=pCount+1
+                pName(pCount)=CleanText(pn) : pAlias(pCount)=pa
+                pType(pCount)=stereo : pCount=pCount+1
             End If
         End If
     Next
@@ -172,6 +165,7 @@ Sub BuildDiagram(repo, pkg, diag, script)
         ElseIf Left(lo,9) ="activate "    Then
         ElseIf Left(lo,11)="deactivate "  Then
         ElseIf Left(lo,9) ="note over "   Then
+        ElseIf Left(lo,8) ="end note"     Then
         ElseIf Left(lo,6) ="actor "       Then
         ElseIf Left(lo,9) ="boundary "    Then
         ElseIf Left(lo,8) ="control "     Then
@@ -220,10 +214,9 @@ Sub BuildDiagram(repo, pkg, diag, script)
     Next
     Dim totalHeight : totalHeight = msgY+60
 
-    ' ---- CREAR LIFELINES en orden NORMAL (izq a der) ----
+    ' ---- CREAR LIFELINES ----
     cx = FIRST_X
     For i = 0 To pCount-1
-        ' Usar tipo "Actor" en EA para actores; "Class" para el resto
         Dim eaType : eaType = "Class"
         If pType(i) = "Actor" Then eaType = "Actor"
         Set newEl = pkg.Elements.AddNew(pName(i), eaType)
@@ -238,15 +231,19 @@ Sub BuildDiagram(repo, pkg, diag, script)
     Next
     diag.Update
 
-    ' ---- NOTA HTTPS/TLS ----
-    Dim noteEl, noteDob
-    Set noteEl = pkg.Elements.AddNew("","Note")
-    noteEl.Notes = "Toda comunicacion entre Psicologo y GUI viaja sobre HTTPS/TLS"
-    noteEl.Update
-    Set noteDob = diag.DiagramObjects.AddNew("","")
-    noteDob.ElementID=noteEl.ElementID
-    noteDob.left=FIRST_X-(LIFELINE_W\2) : noteDob.top=10
-    noteDob.right=FIRST_X+X_GAP+(LIFELINE_W\2) : noteDob.bottom=52 : noteDob.Update
+    ' ---- NOTA DE SEGURIDAD (leida dinamicamente del PlantUML) ----
+    Dim noteText : noteText = ExtractNoteText(script)
+    If noteText <> "" Then
+        Dim noteEl, noteDob
+        Set noteEl = pkg.Elements.AddNew("","Note")
+        noteEl.Notes = noteText
+        noteEl.Update
+        Set noteDob = diag.DiagramObjects.AddNew("","")
+        noteDob.ElementID=noteEl.ElementID
+        noteDob.left=FIRST_X-(LIFELINE_W\2) : noteDob.top=10
+        noteDob.right=FIRST_X+X_GAP+(LIFELINE_W\2) : noteDob.bottom=52
+        noteDob.Update
+    End If
 
     ' ---- CREAR FRAGMENTOS en paquete separado ----
     Dim fragPkg
@@ -269,7 +266,7 @@ Sub BuildDiagram(repo, pkg, diag, script)
     Next
     fragPkg.Update
 
-    ' ---- CREAR MENSAJES en orden NORMAL con SequenceNo ----
+    ' ---- CREAR MENSAJES con SequenceNo ----
     Dim seqNo : seqNo = 1
     For i = 0 To evCount-1
         If evType(i) = 1 Then
@@ -281,26 +278,19 @@ Sub BuildDiagram(repo, pkg, diag, script)
                 Dim mt : mt="Synchronous"
                 If evArrow(i)="-->" Or evArrow(i)="-->>" Then mt="Return"
                 If evArrow(i)="->>" Then mt="Asynchronous"
-
                 Dim cn : Set cn=se.Connectors.AddNew(evMsg(i),"Sequence")
-                cn.Stereotype  = mt
-                cn.ClientID    = se.ElementID
-                cn.SupplierID  = de.ElementID
-                cn.SequenceNo  = seqNo
-                cn.Update
-
+                cn.Stereotype=mt : cn.ClientID=se.ElementID
+                cn.SupplierID=de.ElementID : cn.SequenceNo=seqNo : cn.Update
                 Dim lk : Set lk=diag.DiagramLinks.AddNew("","")
-                lk.ConnectorID = cn.ConnectorID
-
+                lk.ConnectorID=cn.ConnectorID
                 Dim gm
                 If si=di Then
                     gm="EDGE=1;$LLT="&dobID(si)&";$LLB="&dobID(si)&";SX=0;SY="&evY1(i)&";EX=30;EY="&(evY1(i)+22)&";EDGETYPE=Bezier;"
                 Else
                     gm="EDGE=1;$LLT="&dobID(si)&";$LLB="&dobID(di)&";SX=0;SY="&evY1(i)&";EX=0;EY="&evY1(i)&";"
                 End If
-                lk.Geometry = gm
-                lk.Update
-                seqNo = seqNo + 1
+                lk.Geometry=gm : lk.Update
+                seqNo=seqNo+1
             End If
         End If
     Next
@@ -315,6 +305,7 @@ Sub BuildDiagram(repo, pkg, diag, script)
            "Arrastralos a su posicion correspondiente.", vbInformation
 End Sub
 
+' ============================================================
 Function CleanText(s)
     Dim r : r = s
     r = Replace(r, "\n", " ")
@@ -348,4 +339,5 @@ Function FindIdx(token, pName, pAlias, pCount)
     Next
 End Function
 
+' ============================================================
 RunPlantUMLScript

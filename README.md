@@ -92,6 +92,10 @@ Una vez que tenés los archivos `.txt`:
    ```
    C:\Users\TuUsuario\Downloads\DSS_CUN01_plantuml.txt
    ```
+   También se puede pegar con comillas (como Windows las copia):
+   ```
+   "C:\Users\TuUsuario\Downloads\DSS_CUN01_plantuml.txt"
+   ```
 6. Click **OK** → el diagrama se genera automáticamente
 
 ### Post-importación
@@ -133,6 +137,7 @@ Las capas del sistema son: GUI, Controlador, Servicio, Repositorio, BD
 | Los `alt` mueven lifelines | Son `InteractionFragment` en paquete separado — arrastrarlos desde el borde |
 | Caracteres extraños en EA | El script limpia automáticamente acentos y caracteres especiales |
 | `\n` visible en parámetros | El script elimina automáticamente los `\n` de PlantUML |
+| Ruta con comillas no funciona | El script quita automáticamente las comillas — pegar normalmente |
 | `Failed to get EA::IDualApp interface` al ejecutar el script | El registro COM de EA se perdió. Ver sección siguiente. |
 
 ---
